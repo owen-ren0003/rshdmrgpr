@@ -1,0 +1,7 @@
+*.ipynb
+*.out
+
+venv/
+*/venv/
+.ipynb_checkpoints/
+.ipynb/

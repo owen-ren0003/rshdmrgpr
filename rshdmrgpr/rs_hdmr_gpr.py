@@ -10,7 +10,7 @@ from sklearn.metrics import mean_squared_error
 import time
 
 
-def correlation_plot(true, prediction, y_err=None, save_fig=None):
+def correlation_plot(true, prediction, y_err=None, save_fig=None, dpi=None):
     """
     Graphs the correlation between true values and predicted values and saves the image.
     :param true: list like
@@ -20,28 +20,30 @@ def correlation_plot(true, prediction, y_err=None, save_fig=None):
     :param y_err: list like
         The errors of the prediction
     :param save_fig: str
-        The name of the file to save the image.
+        The name of the file to save the image (must include file extension type).
+    :param dpi: int
+        Specifies the quality of the saved image.
     :return: None
     """
-    print('Root mean squared error:', math.sqrt(mean_squared_error(true, prediction)))
+    rmse = math.sqrt(mean_squared_error(true, prediction))
+    print(f'Root mean squared error: {rmse}')
 
-    plt.figure(figsize=(15, 10))
-    plt.xlabel('Target', fontsize=20)
-    plt.ylabel('Prediction', fontsize=20)
+    plt.xlabel('Target', fontsize=14)
+    plt.ylabel('Prediction', fontsize=14)
     if y_err is not None:
-        plt.errorbar(true, prediction, yerr=y_err, c='b',
-                     ecolor='red', fmt='o', label='Predictions with Errors', markersize='1', zorder=1)
+        plt.errorbar(true, prediction, yerr=y_err, c='b', ecolor='red', fmt='o', markersize='1', zorder=1)
     else:
-        plt.scatter(true, prediction, label='Predictions', c='b', s=1, zorder=1)
-    plt.legend(loc='upper left')
+        plt.scatter(true, prediction, c='b', s=1, zorder=1)
     plt.grid()
     if save_fig:
-        plt.savefig(save_fig)
+        plt.savefig(save_fig, dpi=dpi)
+
+    return rmse
 
 
 def kernel_matrices(order, dim, length_scale):
     """
-    Helper function used to create the kernel and matrix input for HDMR.
+    Helper function used to create the RBF kernels and the matrix input for HDMR.
     :param order: int
         The order of HDMR to use.
     :param dim: int
@@ -53,7 +55,7 @@ def kernel_matrices(order, dim, length_scale):
             List of matrices, used to select the component functions. Has size (dim choose order).
         2) list of sklearn.guassian_process.kernels.RBF
             List of kernels to use for training. Has size (dim choose order).
-        
+
     """
     kernels = []
     matrices = []
@@ -76,9 +78,17 @@ class RSHDMRGPR:
         :param kernels: a list of Objects from sklearn.guassian_process.kernels
             the kernels to be used for training each HDMR.
         """
+        # number of models cannot be empty
+        if len(matrices) == 0:
+            raise RuntimeError('Must provide atleast one component function.')
         if num_models != len(matrices):
             raise RuntimeError(f'Number of affine transformations must be equal to number of models which is '
                                f'{self.__num_models}')
+
+        num_rows = matrices[0].shape[0]
+        for mat in matrices:
+            if mat.shape[0] != num_rows:
+                raise RuntimeError(f'The rows of the matrices are not all the same.')
 
         self.__num_models = num_models
         self.__matrices = matrices
@@ -87,41 +97,55 @@ class RSHDMRGPR:
         self.__is_trained = False
         self.__models = None
 
-    def train(self, data, label='out', alphas=1e-7, cycles=50):
+    def train(self, data, label='out', alphas=1e-7, cycles=50, scale_down=(0.5, 1)):
         """
         Trains the 1st order HDMR.
         :param data: DataFrame
-            Must contain 'out' column as the label.
+            Contains both the the features and the label column
         :param label: str
-            The string identifying the label column.
+            The string identifying the label column in data.
         :param alphas: int or list of int
             The noise level to set for each hdmr component function.
         :param cycles: int
             The number of cycles to train. Must be a positive integer.
+        :param scale_down: tuple
+            A length 2 tuple containing the starting scale factor and the step size.
         :return:
             list of training labels
                 list of labels used to carry out all intermediate trainings.
             list of models
                 list of the trained models in order.
         """
-        # data must have output columns named 'out'
-        if 'out' not in data.columns:
-            raise RuntimeError('The data must have a label column labelled "out"')
+        # Checks if the model has been trained already. Only trains once.
         if self.__is_trained:
             raise RuntimeError('Model has already been trained')
+        if label not in data.columns:
+            raise RuntimeError(f'Label column name {label} not found in data.columns.')
 
+        # Validates the noise parameter
         if isinstance(alphas, list):
             if len(alphas) != self.__num_models:
                 raise RuntimeError(f'The length of alphas must match {self.__num_models} but received {len(alphas)}')
         if isinstance(alphas, (int, float)):
             alphas = [alphas] * self.__num_models
 
+        # Validates the scale_down argument
+        if scale_down is None:
+            start, step = 1, 0
+        elif isinstance(scale_down, tuple):
+            if len(scale_down) != 2:
+                raise RuntimeError(f'scale_down must contain 2 elements but received {len(scale_down)}')
+            start, step = scale_down[0], scale_down[1]
+        else:
+            raise RuntimeError(f'scale_down must be of type {tuple} but received {type(scale_down)}')
+
+        # Separates features and labels
         x_train = data.drop(columns=[label])
         y_train = data[label]
 
         # Initializes the list of models to be trained.
         self.__models = [None] * self.__num_models
-        # Trained instance.
+        # Initializes the component outputs used for training.
         y_i = [y_train / self.__num_models] * self.__num_models
 
         for c in range(cycles):
@@ -137,7 +161,7 @@ class RSHDMRGPR:
                 gpr.fit(df, out_i)
 
                 self.__models[i] = gpr
-                y_i[i] = gpr.predict(df) * (0.5 + 0.5 * (c + 1) / cycles)
+                y_i[i] = gpr.predict(df) * min(start + (1 - start) * step * (c + 1) / cycles, 1)
 
         self.__is_trained = True
         print('Training completed.')
@@ -156,8 +180,6 @@ class RSHDMRGPR:
         """
         if not self.__is_trained:
             raise RuntimeError('This model has not been trained. Train the model before telling it to predict.')
-        if test_data.shape[1] != self.__num_models:
-            raise RuntimeError(f'The input shape must be {self.__num_models} but received {test_data.shape[1]}.')
 
         if return_std:
             y_predict = 0
@@ -176,17 +198,25 @@ class RSHDMRGPR:
             return y_predict
 
     def get_models(self):
+        """
+        Returns the trained models
+        :return: The trained models
+        """
+        if not self.__is_trained:
+            raise RuntimeError("Model must be trained first before it can be returned.")
+
         return self.__models
 
 
 class FirstOrderHDMRImpute:
     def __init__(self, models, division=1000):
         """
-
+        Initializes the class by vectorizing the 1D HDMR component functions and creating a dictionary of output values
+        with [division] subdivisions.
         :param models: list of trained sklearn.gaussian_process.GaussianProcessRegressor models.
-            Contains the hdmr component functions of first order.
+            Contains the hdmr component functions of first order. Must be of first order (1 input and 1 output).
         :param division: int
-            The number of divisions in the table
+            The number of divisions in the lookup table
         """
         self.__models = models
         self.__num_models = len(self.__models)
