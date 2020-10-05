@@ -36,8 +36,8 @@ def correlation_plot(true, prediction, y_err=None, save_fig=None, dpi=None):
         plt.scatter(true, prediction, c='b', s=1, zorder=1)
     plt.grid()
     if save_fig:
+        plt.tight_layout()
         plt.savefig(save_fig, dpi=dpi)
-
     return rmse
 
 
@@ -97,7 +97,7 @@ class RSHDMRGPR:
         self.__is_trained = False
         self.__models = None
 
-    def train(self, data, label='out', alphas=1e-7, cycles=50, scale_down=(0.5, 1)):
+    def train(self, data, label='out', alphas=1e-7, cycles=50, scale_down=(0.1, 1), report_rmse=False):
         """
         Trains the 1st order HDMR.
         :param data: DataFrame
@@ -109,7 +109,10 @@ class RSHDMRGPR:
         :param cycles: int
             The number of cycles to train. Must be a positive integer.
         :param scale_down: tuple
-            A length 2 tuple containing the starting scale factor and the step size.
+            A length 2 tuple containing the starting scale factor and the step size. start represent the starting
+            fraction of scale down, and step size represents a rate at which this fraction increases.
+        :param report_rmse: bool
+            Saves the rmse on training over cycles.
         :return:
             list of training labels
                 list of labels used to carry out all intermediate trainings.
@@ -148,6 +151,12 @@ class RSHDMRGPR:
         # Initializes the component outputs used for training.
         y_i = [y_train / self.__num_models] * self.__num_models
 
+        if report_rmse:
+            df_rmse = pd.DataFrame(columns=['cycle_no', 'rmse'])
+            df_rmse['cycle_no'] = np.arange(1, cycles + 1)
+
+        self.__is_trained = True
+
         for c in range(cycles):
             print(f'Training iteration for cycle {c + 1} has started.')
 
@@ -163,8 +172,14 @@ class RSHDMRGPR:
                 self.__models[i] = gpr
                 y_i[i] = gpr.predict(df) * min(start + (1 - start) * step * (c + 1) / cycles, 1)
 
-        self.__is_trained = True
+            if report_rmse:
+                predicted = self.predict(x_train)
+                df_rmse.loc[df_rmse['cycle_no'] == c + 1, 'rmse'] = math.sqrt(mean_squared_error(predicted, y_train))
+
         print('Training completed.')
+
+        if report_rmse:
+            return self, df_rmse
         return self
 
     def predict(self, test_data, return_std=False):
@@ -234,47 +249,60 @@ class FirstOrderHDMRImpute:
         for i in range(len(models)):
             self.__table_yi['y_' + str(i)] = self.__model_func(self.__table_yi['input'], i)
 
-    def get_yi(self, df_na):
+    def get_yi(self, df_na, label='out'):
         """
-        Modifies the DataFrame to contain the outputs of the first hdmr component functions. If
+        Modifies the DataFrame to contain the outputs of the first hdmr component functions.
+
+        Adds n additional columns to df_na, where n is the number of feature columns in df_na. The column
+
         :param df_na: pandas DataFrame
             The dataframe to impute. Must contain the 'output' column and must be the last column.
+        :param label: str
+            The column representing the label.
         :return: list
             Indices of the rows corresponding to nan columns.
         """
 
         n = df_na.shape[1] - 1
+        # Creates the extra columns to the right of the last column of df_na that contains the outputs of the features
+        # from the trained component functions. For instance y_0 will be the output of the 0th indexed column of df_na.
         for i in range(self.__num_models):
             df_na['y_' + str(i)] = self.__model_func(df_na.iloc[:, i], i)
 
-        nan_rows = df_na.loc[df_na.isnull().any(axis=1)]
-        nan_rows_idx = nan_rows.index
-        null_rows = nan_rows.isnull().idxmax(axis=1)
+        nan_rows = df_na.loc[df_na.isnull().any(axis=1)]  # Selects the rows with missing values.
+        nan_rows_idx = nan_rows.index  # Selects the index of those rows with missing values
+        null_rows = nan_rows.isnull().idxmax(axis=1)  # Selects the corresponding column name to the missing value entry
 
         col_to_ord = {}
         for i in range(n):
             col_to_ord[df_na.columns[i]] = i
 
+        #
         for i in range(null_rows.shape[0]):
-            idx = null_rows.index[i]
-            col_no = col_to_ord[null_rows.iloc[i]]
-            val = df_na['out'].loc[idx] - df_na.loc[null_rows.index[i], :][n + 1:].sum(axis=0)
+            idx = null_rows.index[i]  # index of the ith null row occurrence
+            col_no = col_to_ord[null_rows.iloc[i]]  # the column number
+            val = df_na[label].loc[idx] - df_na.loc[idx, :][n + 1:].sum(axis=0)
             df_na.loc[idx, :][n + 1 + col_no] = val
 
         return nan_rows_idx
 
-    def impute(self, df_na):
+    def impute(self, df_na, impute_candidates=False):
         """
         This function imputes the missing values given the input.
+
         :param df_na: pandas DataFrame
             The DataFrame to impute, should contain the columns corresponding to 1D hdmr outputs.
+        :param impute_candidates: bool
+            Option to return the imputed candidates or not.
         :return: pandas DataFrame
             The imputed DataFrame.
         """
         start = time.time()
-        nan_rows = df_na.loc[df_na.isnull().any(axis=1)]
+        nan_rows = df_na.loc[df_na.isnull().any(axis=1)]  # Selects the rows with missing values.
+        # Selects the corresponding column name to the missing value entry.
         null_entry = nan_rows.isnull().idxmax(axis=1)
 
+        # column name to column index dictionary.
         col_to_ord = {}
         for i in range(df_na.shape[1]):
             col_to_ord[df_na.columns[i]] = i
@@ -292,9 +320,9 @@ class FirstOrderHDMRImpute:
                 List of possible candidates.
             """
             min_yi = df.iloc[:, col].min()
-            min_yi_idx = df[df.iloc[:, col] == min_yi]['input'].min()
+            min_yi_idx = df.loc[df.iloc[:, col] == min_yi, 'input'].min()
             max_yi = df.iloc[:, col].max()
-            max_yi_idx = df[df.iloc[:, col] == max_yi]['input'].max()
+            max_yi_idx = df.loc[df.iloc[:, col] == max_yi, 'input'].max()
 
             ret_idxs = []
             for i in range(df.shape[0] - 1):
@@ -314,9 +342,18 @@ class FirstOrderHDMRImpute:
 
             return ret_idxs
 
+        if impute_candidates:
+            candidates = []
+
         for i in range(nan_rows.shape[0]):
-            col_no = col_to_ord[null_entry.iloc[i]]
-            val = get_inputs(df_na.iloc[i, col_no + self.__num_models + 1], col_no + 1)
-            df_na.iloc[i, col_no] = val[0]
+            col_no = col_to_ord[null_entry.iloc[i]]  # changes the column name to column index.
+            val = get_inputs(nan_rows.iloc[i, col_no + self.__num_models + 1], col_no + 1)
+            nan_rows.iloc[i, col_no] = val[0]
+            if impute_candidates:
+                candidates.append(val)
+
+        df_na.loc[df_na.isnull().any(axis=1)] = nan_rows
         print(f'Function execution time took {time.time() - start} seconds.')
+        if impute_candidates:
+            return df_na, nan_rows.index, candidates
         return df_na
