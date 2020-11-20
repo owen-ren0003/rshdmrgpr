@@ -1,9 +1,16 @@
 # Introduction
 
-This package contains the code that supplements the paper 
+This package contains the code that supplements the paper:  
+  
+Random Sampling High Dimensional Model Representation Gaussian Process Regression (RS-HDMR-GPR):
+a Python module for representing multidimensional functions with machine-learned lower-dimensional terms 
+
+A supplementary notebook is provided in this package that the user can run to check the examples 
+from the paper. Everything is coded up from start to finish, the user just need to run the code with respect
+to a valid IPython kernel that has the following packages installed.
 
 ## Requirements
-The following packages are required in order to use this package.
+The following Python packages are required in order to use rshdmrgpr.
 
 [matplotlib>=3.1.3](https://matplotlib.org/)  
 [numpy>=1.18.1](https://numpy.org/)    
