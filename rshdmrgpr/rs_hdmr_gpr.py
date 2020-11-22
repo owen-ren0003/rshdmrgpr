@@ -29,8 +29,10 @@ def correlation_plot(true, prediction, y_err=None, save_fig=None, dpi=None):
     rmse = math.sqrt(mean_squared_error(true, prediction))
     print(f'Root mean squared error: {rmse}')
 
-    plt.xlabel('Target', fontsize=14)
-    plt.ylabel('Prediction', fontsize=14)
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.xlabel('Target', fontsize=24)
+    plt.ylabel('Prediction', fontsize=24)
     if y_err is not None:
         plt.errorbar(true, prediction, yerr=y_err, c='b', ecolor='red', fmt='o', markersize='1', zorder=1)
     else:
@@ -39,6 +41,8 @@ def correlation_plot(true, prediction, y_err=None, save_fig=None, dpi=None):
     if save_fig:
         plt.tight_layout()
         plt.savefig(save_fig, dpi=dpi)
+    else:
+        plt.show()
     return rmse
 
 
@@ -116,7 +120,7 @@ class RSHDMRGPR:
             A length 2 tuple containing the starting scale factor and the step size. start represent the starting
             fraction of scale down, and step size represents a rate at which this fraction increases.
         :param report_rmse: bool
-            Saves the rmse on training over cycles.
+            Saves the rmse on training set evaluated over cycles.
         :return: Returns 1) if report_rmse = True, 2) otherwise.
             1) self, pandas DataFrame
                 The first argument is the trained instance of self. The second contains the RMSE of predicted
@@ -316,16 +320,18 @@ class FirstOrderHDMRImpute:
         This function imputes the missing values given the input.
 
         :param df_na: pandas DataFrame
-            The DataFrame to impute, should contain the columns corresponding to 1D hdmr outputs.
+            The DataFrame to impute, should contain the columns corresponding to 1D hdmr outputs (i.e. have get_yi
+            called upon it).
         :param get_candidates: bool
             Option to return the imputed candidates or not.
         :param threshold: float
             Set the threshold distance for selecting from look-up table.
         :return: 1) if get_candidates=True, 2) otherwise
             1) (pandas DataFrame, pandas Index, pandas Series, list of float)
-                Contains the imputed data, the index of rows with null entries,
+                The imputed df_na, the index of rows with null entries, column name (indexed by the index of null
+                entries) containing the null entry, and list of candidates for imputing that missing value.
             2) pandas DataFrame
-                Contains the imputed data.
+                The imputed df_na.
         """
         start = time.time()
         # Selects the rows with missing values.
