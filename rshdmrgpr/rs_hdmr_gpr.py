@@ -81,7 +81,7 @@ def sequential_fitting(x_train, y_train, models, **params):
     :param models: list of RSHDMRGPR models
         The list of RSHDMRGPR models to fit.
     :param params: dict
-        variable number of key word arguments
+        variable number of key word arguments. Used to specify arguments for RSHDMRGPR.
     :return: None
 
     """
@@ -117,7 +117,8 @@ def sequential_fitting(x_train, y_train, models, **params):
 
 def batch_predict(model, data, batch_size=2000, report_size=50000):
     """
-    Predicts in batches.
+    Predicts in batches. The model must have a .predict function.
+
     :param model: any machine learning model
         A machine learning model. Must contain predict function.
     :param data: pandas DataFrame

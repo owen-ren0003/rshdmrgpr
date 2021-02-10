@@ -1,3 +1,6 @@
+# INSTRUCTIONS TO RUN: Put this file along with rs_hdmr_gpr.py, KEDdataset.dat in the SAME DIRECTORY 
+# and run your Bash script.
+
 import math
 import os
 
