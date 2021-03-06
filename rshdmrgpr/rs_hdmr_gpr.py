@@ -1,13 +1,13 @@
-from itertools import combinations
-import matplotlib.pyplot as plt
 import math
+from itertools import combinations
+import time
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF
 from sklearn.metrics import mean_squared_error
-import time
 
 
 def correlation_plot(true, prediction, y_err=None, save_fig=None, dpi=None):
@@ -70,77 +70,6 @@ def kernel_matrices(order, dim, length_scale, length_scale_bounds=(1e-05, 100000
     return matrices, kernels
 
 
-def sequential_fitting(x_train, y_train, models, **params):
-    """
-    This function fits a sequence of RSHDMRGPR models sequentially.
-
-    :param x_train: pandas DataFrame
-        The training set.
-    :param y_train: array like
-        The label column.
-    :param models: list of RSHDMRGPR models
-        The list of RSHDMRGPR models to fit.
-    :param params: dict
-        variable number of key word arguments. Used to specify arguments for RSHDMRGPR.
-    :return: None
-
-    """
-    default = {
-        'alphas': [1e-6] * len(models),  # can be different for each model
-        'cycles': 50,
-        'scale_down': (0.2, 2),
-        'optimizer': 'fmin_l_bfgs_b',
-        'opt_every': 5,
-        'use_columns': None,
-        'n_restarts': 1,
-        'initializer': 'even'
-    }
-
-    # Reads in the hyperparameters
-    for key in params:
-        if key not in default:
-            raise RuntimeError(f'{key} is not a hyperparameter.')
-        default[key] = params[key]
-
-    y = [y_train]
-
-    for i in range(len(models)):
-        print(f'\nMODEL {i} with {len(models)} component functions has started training.')
-        print(f'The hyperparameters used for fitting is:', default)
-        models[i].train(x_train, y[i], alphas=default['alphas'][i], cycles=default['cycles'],
-                        scale_down=default['scale_down'], optimizer=default['optimizer'],
-                        opt_every=default['opt_every'], use_columns=default['use_columns'],
-                        n_restarts=default['n_restarts'], initializer=default['initializer'])
-        y_predict = models[i].predict(x_train)
-        y.append(y[i] - y_predict)
-
-
-def batch_predict(model, data, batch_size=2000, report_size=50000):
-    """
-    Predicts in batches. The model must have a .predict function.
-
-    :param model: any machine learning model
-        A machine learning model. Must contain predict function.
-    :param data: pandas DataFrame
-        The features used to predict
-    :param batch_size: int
-        An integer representing the size of each batch.
-    :param report_size: int
-        An integer representing the size to report.
-    :return: numpy 1d array
-        An array of the same size as the number of inputs as data containing the predictions.
-    """
-    y_predf = []
-    i = 0
-    while i < data.shape[0]:
-        y_pred = model.predict(data.iloc[i: i + batch_size, :])
-        y_predf.extend(y_pred)
-        i += batch_size
-        if i % report_size == 0:
-            print(f'{i} batches have been predicted.')
-    return np.array(y_predf)
-
-
 class RSHDMRGPR:
     def __init__(self, num_models, matrices, kernels):
         """
@@ -177,16 +106,16 @@ class RSHDMRGPR:
     def train(self, x_train, y_train, alphas=1e-7, scale_down=(0.2, 2), cycles=50, optimizer=None, opt_every=5,
               use_columns=None, n_restarts=3, initializer='even', report_rmse=False):
         """
-        Trains the 1st order HDMR.
+        Trains the component functions.
 
-        :param x_train: DataFrame
-            Contains both the the features
+        :param x_train: pandas DataFrame
+            Contains the features.
         :param y_train: list or 1d-array
-            The label columns of the data.
+            The label column of the data.
         :param alphas: float or list of float
             The noise level to set for each hdmr component function. Should be small.
         :param scale_down: tuple
-            A length 2 tuple containing the starting scale factor and the step size. start represent the starting
+            A length 2 tuple containing the starting scale factor and the step size. start represents the starting
             fraction of scale down, and step size represents a rate at which this fraction increases.
         :param cycles: int
             The number of cycles to train. Must be a positive integer.
@@ -194,18 +123,19 @@ class RSHDMRGPR:
             Must be a GPR optimizer or list of such. Please see sklearn documentation for GaussianProcessRegressor
             optimizer.
         :param opt_every: int
-            Specifies every (opt_every) cycles to apply optimizer. Default=1 (optimizer applied every cycle). No
-            difference if optimizer is None.
+            Specifies every (opt_every) cycles to apply the optimizer. Default=1 (optimizer applied every cycle). This
+            control variable does nothing if the optimizer argument is not provided
         :param use_columns: list of bool or None
-            Specifies which column to use (True indicates use, false otherwise). If None (the default),
-            all columns are used.
+            Specifies which column to use (True indicates use, False otherwise). If None (not specified), all columns
+            are used.
         :param n_restarts: int
-            Positive integer indicating the number of restarts on the optimizer.
+            Positive integer indicating the number of restarts on training. Does nothing meaningful if the optimizer is
+            not provided.
         :param initializer: list of float or 'even'
-            Initializes the starting targets for each component function. If 'even', every target is equal to
-            y_train / len(use_columns).
+            Initializes the starting targets for each component function. If 'even', every target is initialized as
+            y_train / (Number of True in use_columns).
         :param report_rmse: bool
-            Saves the rmse on training over cycles.
+            Saves the rmse from the prediction on the training set over cycles.
         :return: Returns 1) if report_rmse = True, 2) otherwise.
             1) self, pandas DataFrame
                 The first argument is the trained instance of self. The second contains the RMSE of predicted
@@ -214,15 +144,18 @@ class RSHDMRGPR:
                 The trained instance of self.
         """
 
-        # Checks if the model has been trained already. Only trains once.
+        # Checks if the model has been trained already. Should only train once.
         if self.__is_trained:
             raise RuntimeError('Model has already been trained')
 
         # Validates the noise parameter
         if isinstance(alphas, list):
-            if len(alphas) != self.__num_models and not all(isinstance(a, bool) for a in use_columns):
+            if len(alphas) != self.__num_models:  # Checks   that number of alphas is equal to the number of models
                 raise RuntimeError(f'The length of alphas must match {self.__num_models} but received {len(alphas)}')
-        if isinstance(alphas, (int, float)):
+            for a in alphas:  # Every alpha provided must be an int or float
+                if not isinstance(a, (int, float)):
+                    raise RuntimeError(f'A non-float value {a} was provided as the noise.')
+        if isinstance(alphas, (int, float)):  # if just a float or int is provided, all noise will be set to this noise
             alphas = [alphas] * self.__num_models
 
         # Decides which component function to use in training
@@ -230,7 +163,7 @@ class RSHDMRGPR:
             if len(use_columns) == self.__num_models and all(isinstance(a, bool) for a in use_columns):
                 self.__columns = use_columns
             else:
-                raise RuntimeError(f"use_columns must be a bool list of length {self.__num_models}.")
+                raise RuntimeError(f"use_columns must be a list of bool of length {self.__num_models}.")
 
         # Validates the scale_down argument
         if scale_down is None:
@@ -245,18 +178,17 @@ class RSHDMRGPR:
         # Validates the optimizer parameter
         if isinstance(optimizer, list):
             if len(optimizer) != self.__num_models:
-                raise RuntimeError(
-                    f'The length of optimizer must match {self.__num_models} but received {len(alphas)}')
+                raise RuntimeError(f'optimizer provided as a list must have length equal to the number of'
+                                   f'{self.__num_models} but received {len(alphas)}.')
         elif isinstance(optimizer, str):
             optimizer = [optimizer] * self.__num_models
-        if optimizer is None:
+        elif optimizer is None:
             optimizer = [optimizer] * self.__num_models
 
         # Initializes the list of models to be trained.
         self.__models = [None] * self.__num_models
 
         # Initializes the component outputs used for training.
-        print(sum(self.__columns))
         if initializer == 'even':
             y_i = [y_train / sum(self.__columns)] * self.__num_models
             for i in range(self.__num_models):
@@ -265,13 +197,11 @@ class RSHDMRGPR:
         elif isinstance(initializer, list):
             y_i = [initializer[i] * y_train for i in range(self.__num_models)]
 
-        if report_rmse:
-            # used to display the RMSE per cycle on the training set.
-            df_rmse = pd.DataFrame(columns=['cycle_no', 'rmse'])
-            df_rmse['cycle_no'] = np.arange(1, cycles + 1)
+        # These variables are only used if report_rmse is True
+        rmse_val = []
+        cycle_no = []
 
         self.__is_trained = True
-        print(self.__columns)
         for c in range(cycles):
             print(f'Training iteration for CYCLE {c + 1} has started.')
 
@@ -288,14 +218,18 @@ class RSHDMRGPR:
 
                 if self.__columns[i]:
                     print(f'Training component function: {i + 1}, Optimizer: {opt},', end=" ")
+
                     df = np.dot(x_train, self.__matrices[i])
                     gpr = GaussianProcessRegressor(kernel=self.__kernels[i], optimizer=opt,
                                                    n_restarts_optimizer=n_restarts, alpha=alphas[i], random_state=43,
                                                    normalize_y=False)
+
+                    # subtracts every element from y_i except for the i-th variable
                     out_i = y_train - sum(y_i) + y_i[i]
                     gpr.fit(df, out_i)
-                    print(gpr.kernel_)
-                    self.__models[i] = gpr
+
+                    print(f'Resulting length_scale: {gpr.kernel_}')
+                    self.__models[i] = gpr  # replaces the gpr model from the previous cycle
                     y_i[i] = gpr.predict(df) * min(start + (1 - start) * step * (c + 1) / cycles, 1)
                 else:
                     print(f'Component {i + 1} was omitted from training.')
@@ -303,11 +237,12 @@ class RSHDMRGPR:
             if report_rmse:
                 # Calculates and record the RMSE on the training set for each cycle
                 predicted = self.predict(x_train)
-                df_rmse.loc[df_rmse['cycle_no'] == c + 1, 'rmse'] = math.sqrt(mean_squared_error(predicted, y_train))
+                rmse_val.append(math.sqrt(mean_squared_error(predicted, y_train)))
+                cycle_no.append(c + 1)
 
         print('Training completed.')
         if report_rmse:
-            return self, df_rmse
+            return self, pd.DataFrame({'cycle_no': cycle_no, 'rmse': rmse_val})
         return self
 
     def predict(self, test_data, return_std=False):
@@ -356,6 +291,59 @@ class RSHDMRGPR:
             raise RuntimeError("Model must be trained first before it can be returned.")
 
         return self.__models
+
+
+def sequential_fitting(x_train, y_train, models, **params):
+    """
+    This function fits a sequence of RSHDMRGPR models sequentially.
+
+    :param x_train:
+    :param y_train:
+    :param models: list of RSHDMRGPR models
+    :param params: dict
+        variable number of key word arguments
+    :return: list of numpy arrays
+
+    """
+    default = {
+        'alphas': 1e-6,  # can be different for each model
+        'cycles': 50,
+        'scale_down': (0.2, 2),
+        'optimizer': 'fmin_l_bfgs_b',
+        'opt_every': 5,
+        'use_columns': None,
+        'n_restarts': 1,
+        'initializer': 'even'
+    }
+
+    for key in params:
+        if key not in default:
+            raise RuntimeError(f'{key} is not a hyperparameter.')
+        default[key] = params[key]
+
+    y = [y_train]
+    for i in range(len(models)):
+        print(f'\nMODEL {i} with {len(models)} component functions has started training.')
+        models[i].train(x_train, y[i], alphas=default['alphas'][i], cycles=default['cycles'],
+                        scale_down=default['scale_down'], optimizer=default['optimizer'],
+                        opt_every=default['opt_every'], use_columns=default['use_columns'],
+                        n_restarts=default['n_restarts'], initializer=default['initializer'])
+        y_predict = models[i].predict(x_train)
+        y.append(y[i] - y_predict)
+
+    return y
+
+
+def batch_predict(model, data, batch_size=2000, report_size=50000):
+    y_predf = []
+    i = 0
+    while i < data.shape[0]:
+        y_pred = model.predict(data.iloc[i: i + batch_size])
+        y_predf.extend(y_pred)
+        i += batch_size
+        if i % report_size == 0:
+            print(f'{i} batches have been predicted.')
+    return np.array(y_predf)
 
 
 class FirstOrderHDMRImpute:
@@ -439,16 +427,18 @@ class FirstOrderHDMRImpute:
         This function imputes the missing values given the input.
 
         :param df_na: pandas DataFrame
-            The DataFrame to impute, should contain the columns corresponding to 1D hdmr outputs.
+            The DataFrame to impute, should contain the columns corresponding to 1D hdmr outputs (i.e. have get_yi
+            called upon it).
         :param get_candidates: bool
             Option to return the imputed candidates or not.
         :param threshold: float
             Set the threshold distance for selecting from look-up table.
         :return: 1) if get_candidates=True, 2) otherwise
             1) (pandas DataFrame, pandas Index, pandas Series, list of float)
-                Contains the imputed data, the index of rows with null entries,
+                The imputed df_na, the index of rows with null entries, column name (indexed by the index of null
+                entries) containing the null entry, and list of candidates for imputing that missing value.
             2) pandas DataFrame
-                Contains the imputed data.
+                The imputed df_na.
         """
         start = time.time()
         # Selects the rows with missing values.
@@ -474,28 +464,33 @@ class FirstOrderHDMRImpute:
             :return: list of float
                 List of possible candidates.
             """
+            # Obtains the candidates within self.__gap distance
             min_yi = df.iloc[:, col].min()
-            min_yi_idx = df.loc[df.iloc[:, col] == min_yi, 'input'].min()
+            min_yi_idx = df.loc[abs(df.iloc[:, col] - min_yi) <= self.__gap, 'input'].tolist()
             max_yi = df.iloc[:, col].max()
-            max_yi_idx = df.loc[df.iloc[:, col] == max_yi, 'input'].max()
+            max_yi_idx = df.loc[abs(df.iloc[:, col] - max_yi) <= self.__gap, 'input'].tolist()
 
-            ret_idxs = []
-            for i in range(df.shape[0] - 1):
-                left = df.iloc[i, col]
-                right = df.iloc[i + 1, col]
+            ret_inputs = []
+            for i in range(df.shape[0]):
+                val = df.iloc[i, col]
+                if i < df.shape[0] - 1:
+                    left = df.iloc[i, col]
+                    right = df.iloc[i + 1, col]
+                    if left <= num <= right:
+                        ret_inputs.append(df.iloc[i, 0])
+                    elif right <= num < left:
+                        ret_inputs.append(df.iloc[i + 1, 0])
+                    elif abs(val - num) < threshold:
+                        ret_inputs.append(df.iloc[i, 0])
+                elif abs(val - num) < threshold:
+                    ret_inputs.append(df.iloc[i, 0])
 
-                if left <= num < right:
-                    ret_idxs.append(df.iloc[i, 0])
-                elif right <= num < left:
-                    ret_idxs.append(df.iloc[i + 1, 0])
+            if min_yi >= num:
+                ret_inputs.extend(min_yi_idx)
+            elif max_yi <= num:
+                ret_inputs.extend(max_yi_idx)
 
-            if len(ret_idxs) == 0:
-                if min_yi >= num:
-                    ret_idxs.append(min_yi_idx)
-                elif max_yi <= num:
-                    ret_idxs.append(max_yi_idx)
-
-            return ret_idxs
+            return ret_inputs
 
         # Will return all the possible imputation candidates if this option is set to True.
         if get_candidates:
