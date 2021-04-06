@@ -7,7 +7,7 @@ setup(
     author_email='owen.z.ren@1234@gmail.com',
     packages=['rshdmrgpr'],
     install_requires=['numpy', 'pandas', 'matplotlib', 'scikit-learn'],
-    version='0.0.1',
+    version='0.3.1',
     license='MIT',  # This needs to be updated to the Journal requirements
     description='RS-HDMR-GPR',
     zip_safe=False,

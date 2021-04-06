@@ -1,48 +1,69 @@
-import math
 from itertools import combinations
 import time
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF
+from sklearn.gaussian_process.kernels import *
 from sklearn.metrics import mean_squared_error
 
 
-def correlation_plot(true, prediction, y_err=None, save_fig=None, dpi=None):
+def load_data(dataset):
     """
-    Graphs the correlation between true values and predicted values and saves the image.
+    Helper function to load built-in datasets
 
-    :param true: list like
-        The true values.
-    :param prediction: list like
-        The predicted values.
-    :param y_err: list like
-        The errors of the prediction
-    :param save_fig: str
-        The name of the file to save the image (must include file extension type).
-    :param dpi: int
-        Specifies the quality of the saved image.
-    :return: None
+    :param dataset: str
+        Specifies which dataset to load. One of 'h2o', 'KED', 'financial'.
+    :return: pandas DataFrame
+        The desired dataset.
     """
-    rmse = math.sqrt(mean_squared_error(true, prediction))
+    if dataset == 'h2o':
+        return pd.read_csv('data/h2o.dat', sep='\s+', names=['a1', 'a2', 'a3', 'out'])
+    elif dataset == 'KED':
+        columns = [f'a{i + 1}' for i in range(7)]
+        columns.append('out')
+        return pd.read_csv('data/KEDdataset.dat', sep='\s+', names=columns)
+    elif dataset == 'financial':
+        return pd.read_csv('data/financial.csv').rename(columns={'^GSPC': 'out'})
+    else:
+        raise RuntimeError('Not a valid dataset. Please choose from one of: <h2o, KED, financial> datasets.')
+
+
+def correlation_plot(y, y_pred, y_err=None, xlabel=None, ylabel=None, name=None, save=False, sn=False, figsize=None,
+                     ticksize=14):
+    """
+    Used for correlation plots
+    """
+
+    rmse = math.sqrt(mean_squared_error(y, y_pred))
     print(f'Root mean squared error: {rmse}')
 
-    plt.xlabel('Target', fontsize=14)
-    plt.ylabel('Prediction', fontsize=14)
-    if y_err is not None:
-        plt.errorbar(true, prediction, yerr=y_err, c='b', ecolor='red', fmt='o', markersize='1', zorder=1)
+    if figsize:
+        plt.figure(figsize=figsize)
     else:
-        plt.scatter(true, prediction, c='b', s=1, zorder=1)
+        plt.figure()
+    if sn:
+        plt.ticklabel_format(axis="both", style="sci", scilimits=(0,0))
+    plt.xticks(fontsize=ticksize)
+    plt.yticks(fontsize=ticksize)
+    if xlabel:
+        plt.xlabel(xlabel, size=24)
+    if ylabel:
+        plt.ylabel(ylabel, size=24)
+    if y_err is not None:
+        plt.errorbar(y, y_pred, yerr=y_err, c='b', ecolor='red', fmt='o', markersize='1', zorder=1)
+    else:
+        plt.scatter(y, y_pred, c='b', s=1, zorder=1)
     plt.grid()
-    if save_fig:
-        plt.tight_layout()
-        plt.savefig(save_fig, dpi=dpi)
-    return rmse
+    if save:
+        if name is None:
+            raise RuntimeError(f'name argument must be provided if save is True.')
+        plt.savefig(name, dpi=800, bbox_inches='tight')
+    else:
+        plt.show()
 
 
-def kernel_matrices(order, dim, length_scale, length_scale_bounds=(1e-05, 100000.0)):
+def kernel_matrices(order, dim, kernel_function=RBF, **kwargs):
     """
     Helper function used to create the RBF kernels and the matrix input for HDMR.
 
@@ -50,10 +71,8 @@ def kernel_matrices(order, dim, length_scale, length_scale_bounds=(1e-05, 100000
         The order of HDMR to use.
     :param dim: int
         The dimension of the feature space.
-    :param length_scale: int
-        The length scale to use for the HDMR RBF kernels.
-    :param length_scale_bounds: tuple
-        The length scale bounds to use.
+    :param kernel_function: any GPR kernel
+        Any kernel for GPR. Default is RBF
     :return:
         1) list of numpy arrays.
             List of matrices, used to select the component functions. Has size (dim choose order).
@@ -66,45 +85,61 @@ def kernel_matrices(order, dim, length_scale, length_scale_bounds=(1e-05, 100000
     matrix = np.eye(dim, dim)
     for c in combinations(range(dim), order):
         matrices.append(matrix[:, list(c)].copy())
-        kernels.append(RBF(length_scale=length_scale, length_scale_bounds=length_scale_bounds))
+        kernels.append(kernel_function(**kwargs))
     return matrices, kernels
 
 
 class RSHDMRGPR:
-    def __init__(self, num_models, matrices, kernels):
+
+    def __init__(self, matrices, kernels):
         """
         Initializes an instance of RS-HDMR-GPR object.
 
-        :param num_models: int
-            number of Guassian models to be used.
         :param matrices: list of 2D numpy.Arrays
-            Represents the linear transformation applied to the data input (No bias term has yet been added).
-            The list size must equal num_models.
+            A list of linear transformations.
         :param kernels: a list of Objects from sklearn.guassian_process.kernels
-            the kernels to be used for training each HDMR.
+            The kernel to be used for training each HDMR. Right now only RBF and Matern kernels are supported.
         """
         # number of models cannot be empty
         if len(matrices) == 0:
-            raise RuntimeError('Must provide atleast one component function.')
-        if num_models != len(matrices):
-            raise RuntimeError(f'Number of affine transformations must be equal to number of models which is '
-                               f'{self.__num_models}')
+            raise RuntimeError('Must provide at least one component function.')
+        if len(matrices) != len(kernels):
+            raise RuntimeError(f'Number of affine transformations must be equal to the number of kernels provided'
+                               f'which is {len(kernels)}.')
 
-        num_rows = matrices[0].shape[0]
+        self.num_rows = matrices[0].shape[0]
         for mat in matrices:
-            if mat.shape[0] != num_rows:
-                raise RuntimeError(f'The rows of the matrices are not all the same.')
+            if mat.shape[0] != self.num_rows:
+                raise RuntimeError(f'The rows of the provided matrices are not all the same.')
 
-        self.__num_models = num_models
-        self.__matrices = matrices
-        self.__kernels = kernels
+        self.num_models = len(matrices)
+        self.matrices = matrices
+        self.kernels = kernels
 
-        self.__is_trained = False
-        self.__models = None
-        self.__columns = [True] * self.__num_models
+        self.is_trained = False
+        self.models = None
+        self.columns = [True] * self.num_models
 
-    def train(self, x_train, y_train, alphas=1e-7, scale_down=(0.2, 2), cycles=50, optimizer=None, opt_every=5,
-              use_columns=None, n_restarts=3, initializer='even', report_rmse=False):
+    @staticmethod
+    def verbose_print(msg, end=None, on=True):
+        """
+        Helper Function used to print messages specified by the user
+
+        :param msg: str
+            The message to print
+        :param end: str
+            Specifies the ending of a line
+        :param on: bool
+            Specifies whether to print or not
+        :return: None
+        """
+        if on and end is not None:
+            print(msg, end=end)
+        elif on:
+            print(msg)
+
+    def train(self, x_train, y_train, alphas=1e-7, n_restarts=1, cycles=50, scale_down=(0.2, 2), optimizer=None,
+              opt_every=5, use_columns=None, initializer='even', report_loss=False, verbose=0):
         """
         Trains the component functions.
 
@@ -134,8 +169,11 @@ class RSHDMRGPR:
         :param initializer: list of float or 'even'
             Initializes the starting targets for each component function. If 'even', every target is initialized as
             y_train / (Number of True in use_columns).
-        :param report_rmse: bool
-            Saves the rmse from the prediction on the training set over cycles.
+        :param report_loss: bool
+            Saves the loss from the prediction on the training set over cycles. Only RMSE (Root mean-squared error) is
+            supported for now.
+        :param verbose: int
+            Sets the various print details option during training. Takes on values 0, 1, or 2. Default is 0.
         :return: Returns 1) if report_rmse = True, 2) otherwise.
             1) self, pandas DataFrame
                 The first argument is the trained instance of self. The second contains the RMSE of predicted
@@ -145,29 +183,29 @@ class RSHDMRGPR:
         """
 
         # Checks if the model has been trained already. Should only train once.
-        if self.__is_trained:
+        if self.is_trained:
             raise RuntimeError('Model has already been trained')
+
+        # Validates that the number of features matches the number of rows for each element in self.matrices.
+        if x_train.shape[1] != self.num_rows:
+            raise RuntimeError(f'Number of columns in provided data which is {x_train.shape[1]} does not match number '
+                               f'of rows which is {self.num_rows} in each linear transformation')
 
         # Validates the noise parameter
         if isinstance(alphas, list):
-            if len(alphas) != self.__num_models:  # Checks   that number of alphas is equal to the number of models
-                raise RuntimeError(f'The length of alphas must match {self.__num_models} but received {len(alphas)}')
+            if len(alphas) != self.num_models:  # Checks   that number of alphas is equal to the number of models
+                raise RuntimeError(f'The length of alphas must match {self.num_models} but received {len(alphas)}')
             for a in alphas:  # Every alpha provided must be an int or float
                 if not isinstance(a, (int, float)):
-                    raise RuntimeError(f'A non-float value {a} was provided as the noise.')
+                    raise RuntimeError(f'A non-float value {a} was provided as the noise')
+        elif not isinstance(alphas, (int, float)):
+            raise RuntimeError('Provided alpha is not a float or list of floats')
         if isinstance(alphas, (int, float)):  # if just a float or int is provided, all noise will be set to this noise
-            alphas = [alphas] * self.__num_models
-
-        # Decides which component function to use in training
-        if use_columns is not None:
-            if len(use_columns) == self.__num_models and all(isinstance(a, bool) for a in use_columns):
-                self.__columns = use_columns
-            else:
-                raise RuntimeError(f"use_columns must be a list of bool of length {self.__num_models}.")
+            alphas = [alphas] * self.num_models
 
         # Validates the scale_down argument
         if scale_down is None:
-            start, step = 1, 0
+            start, step = 1, 0  # No scale down in this case
         elif isinstance(scale_down, tuple):
             if len(scale_down) != 2:
                 raise RuntimeError(f'scale_down must contain 2 elements but received {len(scale_down)}')
@@ -177,50 +215,64 @@ class RSHDMRGPR:
 
         # Validates the optimizer parameter
         if isinstance(optimizer, list):
-            if len(optimizer) != self.__num_models:
+            if len(optimizer) != self.num_models:
                 raise RuntimeError(f'optimizer provided as a list must have length equal to the number of'
-                                   f'{self.__num_models} but received {len(alphas)}.')
+                                   f'{self.num_models} but received {len(alphas)}.')
         elif isinstance(optimizer, str):
-            optimizer = [optimizer] * self.__num_models
+            optimizer = [optimizer] * self.num_models
         elif optimizer is None:
-            optimizer = [optimizer] * self.__num_models
+            optimizer = [optimizer] * self.num_models
+
+        # Decides which component function to use in training
+        if use_columns is not None:
+            if len(use_columns) == self.num_models and all(isinstance(a, bool) for a in use_columns):
+                self.columns = use_columns
+            else:
+                raise RuntimeError(f"use_columns must be a list of bool of length {self.num_models}.")
 
         # Initializes the list of models to be trained.
-        self.__models = [None] * self.__num_models
+        self.models = [None] * self.num_models
 
         # Initializes the component outputs used for training.
         if initializer == 'even':
-            y_i = [y_train / sum(self.__columns)] * self.__num_models
-            for i in range(self.__num_models):
-                if not self.__columns[i]:
+            y_i = [y_train / sum(self.columns)] * self.num_models
+            for i in range(self.num_models):
+                if not self.columns[i]:
                     y_i[i] = 0
         elif isinstance(initializer, list):
-            y_i = [initializer[i] * y_train for i in range(self.__num_models)]
+            y_i = [initializer[i] * y_train for i in range(self.num_models)]
+
+        # Verbose printing options:
+        if verbose not in [0, 1, 2]:
+            raise RuntimeError(f'The valid levels of verbose are: 0, 1, or 2, please choose one.')
+        else:
+            # Sets the verbose levels
+            lvl0 = bool(max(0, 1 - verbose))
+            lvl1 = bool(max(0, 2 - verbose))
+            lvl2 = bool(max(0, 3 - verbose))
 
         # These variables are only used if report_rmse is True
-        rmse_val = []
+        loss_val = []
         cycle_no = []
 
-        self.__is_trained = True
+        self.is_trained = True
         for c in range(cycles):
-            print(f'Training iteration for CYCLE {c + 1} has started.')
+            self.verbose_print(f'Training iteration for CYCLE {c + 1} has started.', on=lvl1)
 
-            for i in range(self.__num_models):
+            for i in range(self.num_models):
 
                 # Decides which cycle to use optimizer (last cycle will always use)
-                if c % opt_every == 0 or c == cycles - 1:
-                    opt = optimizer[i]
-                else:
-                    opt = None
+                opt = optimizer[i] if c % opt_every == 0 or c == cycles - 1 else None
+
                 if c != 0:
                     # Sets the length_scale to the previous round of length_scales
-                    self.__kernels[i] = self.__models[i].kernel_
+                    self.kernels[i] = self.models[i].kernel_
 
-                if self.__columns[i]:
-                    print(f'Training component function: {i + 1}, Optimizer: {opt},', end=" ")
+                if self.columns[i]:
+                    self.verbose_print(f'Training component function: {i + 1}, Optimizer: {opt},', end=" ", on=lvl0)
 
-                    df = np.dot(x_train, self.__matrices[i])
-                    gpr = GaussianProcessRegressor(kernel=self.__kernels[i], optimizer=opt,
+                    df = np.dot(x_train, self.matrices[i])
+                    gpr = GaussianProcessRegressor(kernel=self.kernels[i], optimizer=opt,
                                                    n_restarts_optimizer=n_restarts, alpha=alphas[i], random_state=43,
                                                    normalize_y=False)
 
@@ -228,21 +280,21 @@ class RSHDMRGPR:
                     out_i = y_train - sum(y_i) + y_i[i]
                     gpr.fit(df, out_i)
 
-                    print(f'Resulting length_scale: {gpr.kernel_}')
-                    self.__models[i] = gpr  # replaces the gpr model from the previous cycle
+                    self.verbose_print(f'Resulting length_scale: {gpr.kernel_}', on=lvl0)
+                    self.models[i] = gpr  # replaces the gpr model from the previous cycle
                     y_i[i] = gpr.predict(df) * min(start + (1 - start) * step * (c + 1) / cycles, 1)
                 else:
-                    print(f'Component {i + 1} was omitted from training.')
+                    self.verbose_print(f'Component {i + 1} was omitted from training.', on=lvl1)
 
-            if report_rmse:
-                # Calculates and record the RMSE on the training set for each cycle
+            if report_loss:
+                # Calculates and records the loss on the training set for each cycle
                 predicted = self.predict(x_train)
-                rmse_val.append(math.sqrt(mean_squared_error(predicted, y_train)))
+                loss_val.append(math.sqrt(mean_squared_error(predicted, y_train)))
                 cycle_no.append(c + 1)
 
-        print('Training completed.')
-        if report_rmse:
-            return self, pd.DataFrame({'cycle_no': cycle_no, 'rmse': rmse_val})
+        self.verbose_print('Training completed.', on=lvl2)
+        if report_loss:
+            return self, pd.DataFrame({'cycle_no': cycle_no, 'rmse': loss_val})
         return self
 
     def predict(self, test_data, return_std=False):
@@ -259,25 +311,25 @@ class RSHDMRGPR:
             2) numpy.ndarray
                 The predicted values
         """
-        if not self.__is_trained:
+        if not self.is_trained:
             raise RuntimeError('This model has not been trained. Train the model before telling it to predict.')
 
         if return_std:
             y_predict = 0
             y_err_sq = 0
-            for i in range(self.__num_models):
-                if self.__columns[i]:
-                    df = np.dot(test_data, self.__matrices[i])
-                    y_pred, y_err = self.__models[i].predict(df, return_std=True)
+            for i in range(self.num_models):
+                if self.columns[i]:
+                    df = np.dot(test_data, self.matrices[i])
+                    y_pred, y_err = self.models[i].predict(df, return_std=True)
                     y_predict += y_pred
                     y_err_sq += y_err * y_err
             return y_predict, np.sqrt(y_err_sq)
         else:
             y_predict = 0
-            for i in range(self.__num_models):
-                if self.__columns[i]:
-                    df = np.dot(test_data, self.__matrices[i])
-                    y_predict += self.__models[i].predict(df)
+            for i in range(self.num_models):
+                if self.columns[i]:
+                    df = np.dot(test_data, self.matrices[i])
+                    y_predict += self.models[i].predict(df)
             return y_predict
 
     def get_models(self):
@@ -287,33 +339,40 @@ class RSHDMRGPR:
         :return: list of GaussianProcessRegressor
             The trained hdmr component functions
         """
-        if not self.__is_trained:
+        if not self.is_trained:
             raise RuntimeError("Model must be trained first before it can be returned.")
 
-        return self.__models
+        return self.models
 
 
 def sequential_fitting(x_train, y_train, models, **params):
     """
-    This function fits a sequence of RSHDMRGPR models sequentially.
+    This function fits a list of RSHDMRGPR models sequentially. Each model
+    is fitted to the difference of the label minus the predictions of the previous
+    models.
 
-    :param x_train:
-    :param y_train:
+    :param x_train: pandas DataFrame
+        Contains the features.
+    :param y_train: list or 1d-array
+        The label column of the data.
     :param models: list of RSHDMRGPR models
+        Contains the list of RSHDMRGPR models to be fitted sequentially.
     :param params: dict
-        variable number of key word arguments
-    :return: list of numpy arrays
+        variable number of key word arguments.
+    :return: None
 
     """
+    n = len(models)
     default = {
-        'alphas': 1e-6,  # can be different for each model
+        'alphas': [1e-6] * n,  # can be different for each model
         'cycles': 50,
         'scale_down': (0.2, 2),
         'optimizer': 'fmin_l_bfgs_b',
         'opt_every': 5,
         'use_columns': None,
         'n_restarts': 1,
-        'initializer': 'even'
+        'initializer': 'even',
+        'verbose': 1
     }
 
     for key in params:
@@ -323,18 +382,55 @@ def sequential_fitting(x_train, y_train, models, **params):
 
     y = [y_train]
     for i in range(len(models)):
-        print(f'\nMODEL {i} with {len(models)} component functions has started training.')
+        print(f'\nMODEL {i + 1} with {len(models)} component functions has started training.')
         models[i].train(x_train, y[i], alphas=default['alphas'][i], cycles=default['cycles'],
                         scale_down=default['scale_down'], optimizer=default['optimizer'],
                         opt_every=default['opt_every'], use_columns=default['use_columns'],
-                        n_restarts=default['n_restarts'], initializer=default['initializer'])
+                        n_restarts=default['n_restarts'], initializer=default['initializer'],
+                        verbose=default['verbose'])
         y_predict = models[i].predict(x_train)
         y.append(y[i] - y_predict)
 
-    return y
+
+def sequential_prediction(x_test, models):
+    """
+    Returns a list of prediction for each order of fit. The i-th element contains the sequential fits up to order i
+    (i.e. the sum of the predictions from model[j] for all j = 0, 1, ... , n).
+
+    :param x_test: pandas DataFrame
+        The data set to be predicted on.
+    :param models: list of RSHDMRGPR models
+        Contains the list of RSHDMRGPR models to be fitted sequentially.
+    :return: list of 1d-array
+        The i-th element contains the sequential fits up to order i (i.e. the sum of the predictions from model[j] for
+        all j = 0, 1, ... , n).
+    """
+    ind_preds = []
+    predictions = []
+    for i in range(0, len(models)):
+        ind_preds.append(batch_predict(models[i], x_test))
+        pred = 0
+        for j in range(0, i + 1):
+            pred += ind_preds[j]
+        predictions.append(pred)
+    return predictions
 
 
 def batch_predict(model, data, batch_size=2000, report_size=50000):
+    """
+    Does batch prediction to conserve memory.
+
+    :param model: Object
+        Any machine learning model with a predict method
+    :param data: pandas DataFrame
+        The dataset to predict on to predict on.
+    :param batch_size: int
+        Positive integer specifying the size of each batch.
+    :param report_size: int
+        Used to print a message after predicting on report_size rows of data.
+    :return:
+    """
+
     y_predf = []
     i = 0
     while i < data.shape[0]:
@@ -363,7 +459,7 @@ class FirstOrderHDMRImpute:
         self.__table_yi = pd.DataFrame(np.linspace(0, 1, division + 1), columns=['input'])
         self.__gap = 2 / division  # Used for imputation to set minimum distance threshold.
 
-        # Computes the lookup table for the first component function values
+        # Function used to compute the lookup table for the first component function values
         def model_func(x, idx):
             if pd.isna(x):
                 return np.nan
@@ -371,13 +467,13 @@ class FirstOrderHDMRImpute:
 
         self.__model_func = np.vectorize(model_func)
 
-        # table_yi has column order: input, y_0, y_1, ... , y_n
+        # Look up table: table_yi has column order: input, y_0, y_1, ... , y_n
         for i in range(len(models)):
             self.__table_yi['y_' + str(i)] = self.__model_func(self.__table_yi['input'], i)
 
     def get_table(self):
         """
-        Returns the lookup table for the component functions.
+        Returns the lookup table for the component functions under the specified number of divisions.
 
         :return: panda DataFrame
             Returns the lookup table for the HDMR component functions.
