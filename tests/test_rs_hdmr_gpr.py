@@ -1,5 +1,4 @@
 import io
-import os
 import unittest
 from unittest.mock import patch
 
@@ -33,7 +32,7 @@ class TestRSHDMRGPR(unittest.TestCase):
         self.x_train, self.x_test, self.y_train, self.y_test = \
             train_test_split(data.drop(columns=['out']), data['out'], train_size=100, test_size=None, random_state=42)
 
-        matrices, kernels = kernel_matrices(1, n, 0.6)
+        matrices, kernels = kernel_matrices(1, n, length_scale=0.6)
         # Initializes
         self.model = RSHDMRGPR(matrices, kernels)
 
