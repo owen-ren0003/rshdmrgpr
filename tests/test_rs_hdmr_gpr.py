@@ -1,18 +1,11 @@
 import io
-import sys
+import os
 import unittest
-from unittest import mock
 from unittest.mock import patch
 
-import numpy as np
-import pandas as pd
-from sklearn.metrics import mean_squared_error
-from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
-from sklearn.gaussian_process.kernels import *
-from sklearn.gaussian_process import GaussianProcessRegressor
 
-from rshdmrgpr.rs_hdmr_gpr2 import *
+from rshdmrgpr.rs_hdmr_gpr import *
 
 
 class TestRSHDMRGPR(unittest.TestCase):
@@ -47,7 +40,7 @@ class TestRSHDMRGPR(unittest.TestCase):
     @patch('sys.stdout', new_callable=io.StringIO)
     def test_v_print(self, mock_stdout):
         """
-        Tests the v_print member method
+        Tests the verbose_print member method
         """
         # Tests if output is printed correctly when on=True
         RSHDMRGPR.verbose_print("Something", on=True)
@@ -106,6 +99,38 @@ class TestRSHDMRGPR(unittest.TestCase):
         with self.assertRaises(RuntimeError) as context:
             self.model.train(self.x_train, self.y_train, verbose=3)
         self.assertEqual(context.exception.args[0], "The valid levels of verbose are: 0, 1, or 2, please choose one.")
+
+
+class TestHelpers(unittest.TestCase):
+    def test_load_data(self):
+        """
+        Tests the load_data helper function
+        """
+        data1 = load_data('h2o')
+        self.assertEqual(data1.shape, (10001, 4))
+
+        data2 = load_data('KED')
+        self.assertEqual(data2.shape, (585890, 8))
+
+        data3 = load_data('financial')
+        self.assertEqual(data3.shape, (3927, 15))
+
+    def test_kernel_matrices(self):
+        """
+        Tests the kernel_matrices helper function
+        """
+        matrices, kernels = kernel_matrices(3, 5, kernel_function=RBF, length_scale=0.6)
+
+        self.assertEqual(len(matrices), len(kernels))
+        self.assertEqual(len(matrices), 10)
+        for i in range(len(matrices)):
+            self.assertEqual(matrices[i].shape, (5, 3))
+            self.assertEqual(kernels[i].length_scale, 0.6)
+
+        with self.assertRaises(RuntimeError) as context:
+            kernel_matrices(6, 5, kernel_function=RBF, length_scale=0.6)
+        self.assertEqual(context.exception.args[0], "order must be larger than 1 and less than dim which is 5 but 6 "
+                                                    "was given.")
 
 
 if __name__ == '__main__':

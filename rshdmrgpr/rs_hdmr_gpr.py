@@ -1,4 +1,5 @@
 from itertools import combinations
+import os
 import time
 
 import matplotlib.pyplot as plt
@@ -17,26 +18,28 @@ def load_data(dataset):
     :return: pandas DataFrame
         The desired dataset.
     """
+    file_parent = os.path.dirname(os.path.split(__file__)[0])
     if dataset == 'h2o':
-        return pd.read_csv('data/h2o.dat', sep='\s+', names=['a1', 'a2', 'a3', 'out'])
+        return pd.read_csv(file_parent + '/data/h2o.dat', sep='\s+', names=['a1', 'a2', 'a3', 'out'])
     elif dataset == 'KED':
         columns = [f'a{i + 1}' for i in range(7)]
         columns.append('out')
-        return pd.read_csv('data/KEDdataset.dat', sep='\s+', names=columns)
+        return pd.read_csv(file_parent + '/data/KEDdataset.dat', sep='\s+', names=columns)
     elif dataset == 'financial':
-        return pd.read_csv('data/financial.csv').rename(columns={'^GSPC': 'out'})
+        return pd.read_csv(file_parent + '/data/financial.csv').rename(columns={'^GSPC': 'out'})
     else:
         raise RuntimeError('Not a valid dataset. Please choose from one of: <h2o, KED, financial> datasets.')
 
 
 def correlation_plot(y, y_pred, y_err=None, xlabel=None, ylabel=None, name=None, save=False, sn=False, figsize=None,
-                     ticksize=14):
+                     ticksize=14, display_rmse=True):
     """
     Used for correlation plots
     """
 
-    rmse = math.sqrt(mean_squared_error(y, y_pred))
-    print(f'Root mean squared error: {rmse}')
+    if display_rmse:
+        rmse = math.sqrt(mean_squared_error(y, y_pred))
+        print(f'Root mean squared error is: {rmse}')
 
     if figsize:
         plt.figure(figsize=figsize)
@@ -72,7 +75,7 @@ def kernel_matrices(order, dim, kernel_function=RBF, **kwargs):
     :param dim: int
         The dimension of the feature space.
     :param kernel_function: any GPR kernel
-        Any kernel for GPR. Default is RBF
+        Any kernel for GPR. Default is RBF. Must provide parameters for the kernel in **kwargs.
     :return:
         1) list of numpy arrays.
             List of matrices, used to select the component functions. Has size (dim choose order).
@@ -80,6 +83,9 @@ def kernel_matrices(order, dim, kernel_function=RBF, **kwargs):
             List of kernels to use for training. Has size (dim choose order).
 
     """
+    if order > dim or order < 1:
+        raise RuntimeError(f"order must be larger than 1 and less than dim which is {dim} but {order} was given.")
+
     kernels = []
     matrices = []
     matrix = np.eye(dim, dim)
@@ -141,7 +147,7 @@ class RSHDMRGPR:
     def train(self, x_train, y_train, alphas=1e-7, n_restarts=1, cycles=50, scale_down=(0.2, 2), optimizer=None,
               opt_every=5, use_columns=None, initializer='even', report_loss=False, verbose=0):
         """
-        Trains the component functions.
+        Trains the RSHDMRGPR model (trains all the GPR sub-models, ie. the component functions).
 
         :param x_train: pandas DataFrame
             Contains the features.
@@ -151,7 +157,8 @@ class RSHDMRGPR:
             The noise level to set for each hdmr component function. Should be small.
         :param scale_down: tuple
             A length 2 tuple containing the starting scale factor and the step size. start represents the starting
-            fraction of scale down, and step size represents a rate at which this fraction increases.
+            fraction of scale down, and step size represents a rate at which this fraction increases. This is used to
+            prevent overfitting of a single component function.
         :param cycles: int
             The number of cycles to train. Must be a positive integer.
         :param optimizer: str or list of str
