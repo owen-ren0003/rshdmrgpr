@@ -246,8 +246,10 @@ class RSHDMRGPR:
             for i in range(self.num_models):
                 if not self.columns[i]:
                     y_i[i] = 0
-        elif isinstance(initializer, list):
+        elif isinstance(initializer, list) and len(initializer) == self.num_models:
             y_i = [initializer[i] * y_train for i in range(self.num_models)]
+        else:
+            raise RuntimeError(f"Invalid initializer, must be a list of size {self.num_models} or 'even'.")
 
         # Verbose printing options:
         if verbose not in [0, 1, 2]:
@@ -258,6 +260,7 @@ class RSHDMRGPR:
             lvl1 = bool(max(0, 2 - verbose))
             lvl2 = bool(max(0, 3 - verbose))
 
+        start_time = time.time()
         # These variables are only used if report_rmse is True
         loss_val = []
         cycle_no = []
@@ -299,7 +302,8 @@ class RSHDMRGPR:
                 loss_val.append(math.sqrt(mean_squared_error(predicted, y_train)))
                 cycle_no.append(c + 1)
 
-        self.verbose_print('Training completed.', on=lvl2)
+        self.verbose_print(f'Training completed. Total time for training is {time.time() - start_time:.2f} seconds.',
+                           on=lvl2)
         if report_loss:
             return self, pd.DataFrame({'cycle_no': cycle_no, 'rmse': loss_val})
         return self
@@ -608,7 +612,7 @@ class FirstOrderHDMRImpute:
                 candidates.append(val)
 
         df_na.loc[df_na.isnull().any(axis=1)] = nan_rows
-        print(f'Function execution time took {time.time() - start} seconds.')
+        print(f'Imputation function execution time took {time.time() - start} seconds.')
 
         if get_candidates:
             return df_na, nan_rows.index, null_entry, candidates
