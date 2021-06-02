@@ -24,7 +24,7 @@ def load_data(dataset):
     elif dataset == 'KED':
         columns = [f'a{i + 1}' for i in range(7)]
         columns.append('out')
-        return pd.read_csv(file_parent + '/data/KEDdataset.dat', sep='\s+', names=columns)
+        return pd.read_csv(file_parent + '/data/KED.dat', sep='\s+', names=columns)
     elif dataset == 'financial':
         return pd.read_csv(file_parent + '/data/financial.csv').rename(columns={'^GSPC': 'out'})
     else:
@@ -209,6 +209,9 @@ class RSHDMRGPR:
             raise RuntimeError('Provided alpha is not a float or list of floats')
         if isinstance(alphas, (int, float)):  # if just a float or int is provided, all noise will be set to this noise
             alphas = [alphas] * self.num_models
+        # Adds in the noise parameter (which is WhiteKernel) for each model.
+        for i in range(len(self.kernels)):
+            self.kernels[i] += WhiteKernel(alphas[i])
 
         # Validates the scale_down argument
         if scale_down is None:
@@ -276,14 +279,15 @@ class RSHDMRGPR:
 
                 if c != 0:
                     # Sets the length_scale to the previous round of length_scales
-                    self.kernels[i] = self.models[i].kernel_
+                    self.kernels[i].k1 = self.models[i].kernel_.k1
+                    self.kernels[i].k2 = self.models[i].kernel_.k2
 
                 if self.columns[i]:
                     self.verbose_print(f'Training component function: {i + 1}, Optimizer: {opt},', end=" ", on=lvl0)
 
                     df = np.dot(x_train, self.matrices[i])
                     gpr = GaussianProcessRegressor(kernel=self.kernels[i], optimizer=opt,
-                                                   n_restarts_optimizer=n_restarts, alpha=alphas[i], random_state=43,
+                                                   n_restarts_optimizer=n_restarts, alpha=1e-10, random_state=43,
                                                    normalize_y=False)
 
                     # subtracts every element from y_i except for the i-th variable
@@ -391,6 +395,7 @@ def sequential_fitting(x_train, y_train, models, **params):
             raise RuntimeError(f'{key} is not a hyperparameter.')
         default[key] = params[key]
 
+    print(f"The hyperparameters used are: {default}")
     y = [y_train]
     for i in range(len(models)):
         print(f'\nMODEL {i + 1} with {len(models)} component functions has started training.')
