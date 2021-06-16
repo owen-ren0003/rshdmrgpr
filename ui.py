@@ -128,7 +128,7 @@ class DataLoader(tk.Frame):
 
 
 class Trainer(tk.Frame):
-
+    """ This class """
     model = None
     y_pred = None
     y_true = None

@@ -11,7 +11,7 @@ from sklearn.metrics import mean_squared_error
 
 def load_data(dataset):
     """
-    Helper function to load built-in datasets
+    Helper function to load built-in datasets from this package
 
     :param dataset: str
         Specifies which dataset to load. One of 'h2o', 'KED', 'financial'.
@@ -34,7 +34,7 @@ def load_data(dataset):
 def correlation_plot(y, y_pred, y_err=None, xlabel=None, ylabel=None, name=None, save=False, sn=False, figsize=None,
                      ticksize=14, display_rmse=True):
     """
-    Used for correlation plots
+    Helper function used to plot correlation between two variables.
     """
 
     if display_rmse:
@@ -154,7 +154,10 @@ class RSHDMRGPR:
         :param y_train: list or 1d-array
             The label column of the data.
         :param alphas: float or list of float
-            The noise level to set for each hdmr component function. Should be small.
+            The noise level to be set for the component functions, each of which is a GPR model. If int, the noise
+            level for training each of these models is the set to this for all cycles. To set different noise levels for
+            different component functions, a list of int must be specified. Note that if optimizer is used, these values
+            will be optimized via a WhiteKernel.
         :param scale_down: tuple
             A length 2 tuple containing the starting scale factor and the step size. start represents the starting
             fraction of scale down, and step size represents a rate at which this fraction increases. This is used to
