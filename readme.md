@@ -19,7 +19,7 @@ The following Python packages are required in order to use rshdmrgpr.
 
 # Installation
 
-To install and use this package, open any python terminal and install using the following code:
+To install and use this package, have git installed and execute the following line within an anaconda environment command prompt:
 
 ```
 pip install git+https://github.com/owen-ren0003/rshdmrgpr.git
@@ -28,3 +28,5 @@ pip install git+https://github.com/owen-ren0003/rshdmrgpr.git
 ```
 import rshdmrgpr
 ```
+
+Please consult the manual for more details.
