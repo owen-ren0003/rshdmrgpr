@@ -20,13 +20,16 @@ def load_data(dataset):
     """
     file_parent = os.path.dirname(os.path.split(__file__)[0])
     if dataset == 'h2o':
-        return pd.read_csv(file_parent + '/data/h2o.dat', sep='\s+', names=['a1', 'a2', 'a3', 'out'])
+        dir = os.path.join("data", "h2o.dat")  # We use os.path.join to ensure it works on both mac and windows
+        return pd.read_csv(os.path.join(file_parent, dir), sep='\s+', names=['a1', 'a2', 'a3', 'out'])
     elif dataset == 'KED':
         columns = [f'a{i + 1}' for i in range(7)]
         columns.append('out')
-        return pd.read_csv(file_parent + '/data/KED.dat', sep='\s+', names=columns)
+        dir = os.path.join("data", "KED.dat")
+        return pd.read_csv(os.path.join(file_parent, dir), sep='\s+', names=columns)
     elif dataset == 'financial':
-        return pd.read_csv(file_parent + '/data/financial.csv').rename(columns={'^GSPC': 'out'})
+        dir = os.path.join("data", "financial.csv")
+        return pd.read_csv(os.path.join(file_parent, dir)).rename(columns={'^GSPC': 'out'})
     else:
         raise RuntimeError('Not a valid dataset. Please choose from one of: <h2o, KED, financial> datasets.')
 
