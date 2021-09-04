@@ -29,4 +29,9 @@ pip install git+https://github.com/owen-ren0003/rshdmrgpr.git
 import rshdmrgpr
 ```
 
+Also to run the unittest, navigate to the rshdmrgpr directory and just type
+```
+pytest
+```
+
 Please consult the manual for more details.

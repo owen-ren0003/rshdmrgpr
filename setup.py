@@ -6,7 +6,7 @@ setup(
     author='Owen Ren, Mohamed Boussadi Ali, Sergei Manzhos',
     author_email='owen.z.ren@1234@gmail.com',
     packages=['rshdmrgpr'],
-    install_requires=['numpy', 'pandas', 'matplotlib', 'scikit-learn'],
+    install_requires=['numpy', 'pandas', 'matplotlib', 'scikit-learn', 'pytest'],
     version='0.3.1',
     license='MIT',  # This needs to be updated to the Journal requirements
     description='RS-HDMR-GPR',
